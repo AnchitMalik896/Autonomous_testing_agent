@@ -1,0 +1,8 @@
+.env
+node_modules/
+results.json
+state/.auth/
+state/.pw-*.json
+test-results/
+playwright-report/
+*.sp-*.spec.ts
