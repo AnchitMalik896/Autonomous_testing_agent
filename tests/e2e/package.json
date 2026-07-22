@@ -1,0 +1,24 @@
+{
+  "name": "e2e-suite",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "test": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "lint:bans": "node harness/lint-bans.mjs",
+    "gate": "node harness/gate.mjs",
+    "sensitivity": "node harness/sensitivity.mjs",
+    "canary": "node harness/canary.mjs",
+    "handback": "node harness/handback.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^20.14.0",
+    "@types/pg": "^8.11.6",
+    "typescript": "^5.5.0"
+  }
+}
