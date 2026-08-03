@@ -1,0 +1,15 @@
+{
+  "specs": ["login.spec.ts"],
+  "specHash": "sha256:UNSET-until-spec-author-freezes",
+  "seed": 424242,
+  "clock": "2026-01-15T10:00:00.000Z",
+  "fixture": { "id": "seed-v1", "fingerprint": "sha256:UNSET-until-registered" },
+  "oracleMap": {
+    "login.happy/A1": "O1:PRD-acceptance",
+    "login.session-row/A1": "O2:round-trip"
+  },
+  "sensitivityProofs": {
+    "login.happy/A1": "F-EXAMPLE-1",
+    "login.session-row/A1": "F-EXAMPLE-2"
+  }
+}
