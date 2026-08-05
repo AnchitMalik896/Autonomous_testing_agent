@@ -1,0 +1,6 @@
+{
+  "bootCommand": null,
+  "teardownCommand": null,
+  "sandboxBaseUrl": null,
+  "canaries": []
+}
