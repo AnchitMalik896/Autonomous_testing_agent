@@ -1,105 +1,434 @@
-# Autonomous Testing Agent — Tester Claude + Coder Claude
+# Autonomous Testing Agent: Tester Claude + Coder Claude
 
-A two-process, human-gated testing system. **Tester Claude** (this repo) reads a target
-app's PRD, audits what's actually implemented, designs and freezes trustworthy Playwright
-tests, runs them, and hands you **one pasteable block** of failures. You paste that block
-into **Coder Claude** (a separate `claude` session running *inside* the target app's repo),
-which fixes the app. You are the only channel and the only gate — the two agents never talk
-to each other directly.
+A human-gated, two-agent testing workflow that separates software validation from implementation.
 
-This repo is target-agnostic: it has been run against a couple of different apps so far
-(a simple prior target, and the current one, `prd_qofe`, a FastAPI + React financial
-reporting system). Pointing it at a new target is a matter of config, not code — see
-"Testing a new target" below.
+**Tester Claude** operates from this repository. It reads a target application's PRD, audits the implementation, designs and validates Playwright tests, executes the trusted test suite, and produces a single failure handback.
 
-## How it's organized
+**Coder Claude** runs in a separate Claude session inside the target application's repository. It receives the handback, diagnoses issues, and implements fixes.
 
-| Path | What it is |
-|---|---|
-| `.claude/skills/*/SKILL.md` | Tester Claude's skill chain (see below) — this is the engine |
-| `.claude/agents/*.md` | Read-only "case-hunter" subagents that `test-design` fans out to |
-| `tests/e2e/` | The Playwright suite: fixtures, harness, state, and frozen specs, per target |
-| `docs/` | Target-specific expanded PRDs produced by `prd-expand` |
-| `CLAUDE.md` | Points Tester Claude at the *current* target — edit this per target |
-| `CONTEXT.md` | Short between-session resume notes (auto-maintained) |
+The two agents never communicate directly. All communication flows through a human operator, who acts as the sole coordination layer and approval gate.
 
-## The skill chain
+---
 
-Ten skills, run mostly by the orchestrator (`test-session`) but each independently
-invocable:
+# Overview
 
-1. **`prd-expand`** — turns a target's raw feature PRD(s) into a maximally detailed,
-   provenance-tagged expanded PRD (data dict, ranked invariants, roles matrix,
-   shared-state map, Given/When/Then ACs). Human-gated; only reruns when a PRD changes.
-2. **`prd-map`** — parses the expanded PRD into a structured capability inventory
-   (flows, acceptance criteria, oracle sources).
-3. **`impl-audit`** — glass-box reads the target's app code (read-only) to produce the
-   implementation matrix, `MISSING` entries, and a change-impact set from `git diff`.
-4. **`ui-map`** — derives the expected UI inventory per flow from the PRD, with locators
-   from a read-only crawl.
-5. **`test-design`** — the brain: fills the mandatory case-design rubric per flow by
-   fanning out to the case-hunter fleet (`.claude/agents/`), assigns oracle provenance,
-   authors fault plans and PRNG variant generators.
-6. **`spec-author`** — freezes designed cases into TypeScript Playwright specs under
-   `tests/e2e/flows/<flow>/`.
-7. **`sensitivity-prove`** — proves every assertion can actually fail, by running a
-   planted-fault harness. Vacuous assertions are rejected, never committed.
-8. **`determinism-gate`** — a four-phase gate (repeat / shuffle / clock / hermetic)
-   before a spec is admitted into the trusted suite (or quarantined).
-9. **`suite-run`** — executes the admitted suite, targeted or full, with a canary
-   self-test and checkpoint replay.
-10. **`triage-handback`** — turns raw results into the one pasteable handback block:
-    flake classification, dedup, bisection, `MISSING`/`UNTESTABLE` merge, honesty footer.
+The system follows a strict separation of responsibilities:
 
-Plus **`trust-report`** (session-level trust posture, never a single "% complete" number),
-**`test-session`** (orchestrates all of the above into one turn), and **`suite-only`**
-(fast path — just re-run the already-admitted suite, skip everything else).
-
-## Testing a new target
-
-1. Point `CLAUDE.md` at the new target: where it lives, how to boot it, its HTTP
-   surface(s), and the hard boundary rule (Tester Claude never edits target app code).
-2. Get the target's PRD(s) into this repo (or a path Tester Claude can read) and run
-   `prd-expand`, then `prd-map`.
-3. `cp tests/e2e/.env.example tests/e2e/.env` and fill in `BASE_URL` + `DB_URL_RO`
-   (create a **SELECT-only** DB role for the read-only oracle queries — the suite never
-   writes to the app's DB directly).
-4. Fill in `tests/e2e/fixtures/adapter.ts` — the one app-specific file (how to create a
-   session/identity, whatever the target's actual auth model is).
-5. `cd tests/e2e && npm install && npx playwright install chromium`
-6. Make sure the target's own seed/reset tooling provisions known reference data on boot
-   — the suite treats that as its fixed baseline and never mutates it.
-7. Make sure the target app itself is up and reachable (you boot it — this agent doesn't).
-8. Tell Tester Claude to run — `test-session` will build the capability inventory, run
-   `impl-audit`/`ui-map`, and start designing/authoring cases per flow.
-
-## The loop (every cycle, once a target is set up)
-
-```
-you:            "run tests"            → Tester Claude (test-session skill)
-Tester Claude:  audits diff → designs/authors/gates any new tests → runs suite
-                → prints ONE handback block → stops
-you:            paste the block into Coder Claude (running inside the target's repo)
-Coder Claude:   finds and fixes the causes, commits
-you:            back to Tester Claude: "run tests"   (the git diff is its done-signal)
+```text
+Target Application
+        │
+        ▼
+   Tester Claude
+        │
+        ▼
+  Failure Handback
+        │
+        ▼
+      Human
+        │
+        ▼
+   Coder Claude
+        │
+        ▼
+      Fixes
 ```
 
-## Without any LLM
+This architecture prevents the testing agent from modifying application code while ensuring that every reported issue is independently verified before remediation.
 
-The committed suite is a plain Playwright project — no agent required to just run it:
+The framework is target-agnostic. It has already been used against multiple applications, including:
+
+* A simple reference application
+* `prd_qofe`, a FastAPI + React financial reporting platform
+
+Adapting the framework to a new application requires configuration rather than code changes.
+
+---
+
+# Repository Structure
+
+| Path                        | Purpose                                                                  |
+| --------------------------- | ------------------------------------------------------------------------ |
+| `.claude/skills/*/SKILL.md` | Tester Claude's skill chain and orchestration logic                      |
+| `.claude/agents/*.md`       | Read-only specialist agents used during test design                      |
+| `tests/e2e/`                | Playwright suite, fixtures, harness, state, and generated specifications |
+| `docs/`                     | Expanded PRDs generated by `prd-expand`                                  |
+| `CLAUDE.md`                 | Active target configuration                                              |
+| `CONTEXT.md`                | Session continuity notes and state summaries                             |
+
+---
+
+# Skill Pipeline
+
+The system is composed of specialized skills coordinated primarily through `test-session`.
+
+## 1. prd-expand
+
+Transforms raw product requirements into a detailed, provenance-tracked specification.
+
+Generated artifacts include:
+
+* Data dictionary
+* Role matrix
+* Shared-state map
+* Ranked invariants
+* Acceptance criteria
+* Given/When/Then scenarios
+
+This step is human-gated and only reruns when requirements change.
+
+---
+
+## 2. prd-map
+
+Parses the expanded PRD into a structured capability inventory.
+
+Outputs include:
+
+* User flows
+* Acceptance criteria
+* Oracle sources
+* Coverage mapping
+
+---
+
+## 3. impl-audit
+
+Performs a read-only implementation audit of the target application.
+
+Produces:
+
+* Implementation matrix
+* Missing capability inventory
+* Change-impact analysis from Git diffs
+
+---
+
+## 4. ui-map
+
+Builds an expected UI inventory from the PRD and a read-only application crawl.
+
+Captures:
+
+* Screens
+* Controls
+* Workflows
+* Locators
+
+---
+
+## 5. test-design
+
+Designs test cases using the capability inventory and specialist case-hunter agents.
+
+Responsibilities include:
+
+* Scenario generation
+* Edge-case discovery
+* Oracle assignment
+* Fault planning
+* Variant generation
+
+---
+
+## 6. spec-author
+
+Converts approved test designs into frozen Playwright specifications.
+
+Generated tests are stored under:
+
+```text
+tests/e2e/flows/<flow>/
+```
+
+---
+
+## 7. sensitivity-prove
+
+Verifies that every assertion is capable of detecting failure.
+
+A planted-fault harness intentionally introduces defects.
+
+Assertions that continue to pass despite injected faults are rejected as vacuous and never admitted to the trusted suite.
+
+---
+
+## 8. determinism-gate
+
+Ensures reliability and reproducibility before admission.
+
+Each specification must pass:
+
+1. Repeat validation
+2. Execution-order shuffle validation
+3. Clock manipulation validation
+4. Hermetic environment validation
+
+Unstable tests are quarantined.
+
+---
+
+## 9. suite-run
+
+Executes the trusted suite.
+
+Features include:
+
+* Targeted execution
+* Full-suite execution
+* Canary self-tests
+* Checkpoint replay
+
+---
+
+## 10. triage-handback
+
+Transforms raw execution results into a single operator-facing report.
+
+Includes:
+
+* Failure classification
+* Flake detection
+* Deduplication
+* Bisection results
+* Missing functionality inventory
+* Untestable capability inventory
+* Trust annotations
+
+---
+
+# Supporting Skills
+
+## trust-report
+
+Produces a session-level assessment of test trustworthiness and coverage posture.
+
+The system intentionally avoids simplistic coverage claims such as "100% complete."
+
+---
+
+## test-session
+
+Primary orchestration entry point.
+
+Executes the complete workflow:
+
+```text
+PRD Analysis
+      ↓
+Implementation Audit
+      ↓
+UI Mapping
+      ↓
+Test Design
+      ↓
+Spec Authoring
+      ↓
+Trust Validation
+      ↓
+Suite Execution
+      ↓
+Handback Generation
+```
+
+---
+
+## suite-only
+
+Fast execution path that skips design and generation phases and reruns the existing trusted suite.
+
+---
+
+# Testing a New Target
+
+## 1. Configure the Target
+
+Update `CLAUDE.md` with:
+
+* Repository location
+* Startup instructions
+* Application URLs
+* Boundary rules
+
+Tester Claude must never modify application code.
+
+---
+
+## 2. Import Product Requirements
+
+Provide the application's PRD and run:
 
 ```bash
-cd tests/e2e && npm test          # identical verdict on any machine, no agent
-node harness/handback.mjs         # re-render the last handback block
-cat state/trust-report.md         # current trust posture
+prd-expand
+prd-map
 ```
 
-## Ground rules the system enforces
+---
 
-- Tester Claude reads target app code **read-only** and never names app files in a
-  handback — only symptom-level behavior.
-- A retry-pass is reported **flaky**, never green. Quarantine: 2 flaps in, 5 clean out.
-- Environment drift (wrong seed, unreachable app/DB) aborts loudly before any test runs.
-- Green is reported with oracle provenance + residual — never as "100% correct".
-- Tester Claude never edits the target application's code, under any target. Defects are
-  always handed back for a separate Coder Claude to fix.
+## 3. Configure Environment Variables
+
+```bash
+cp tests/e2e/.env.example tests/e2e/.env
+```
+
+Populate:
+
+```env
+BASE_URL=
+DB_URL_RO=
+```
+
+`DB_URL_RO` should use a strictly read-only database account.
+
+---
+
+## 4. Implement the Authentication Adapter
+
+Update:
+
+```text
+tests/e2e/fixtures/adapter.ts
+```
+
+This is the primary application-specific integration point.
+
+---
+
+## 5. Install Dependencies
+
+```bash
+cd tests/e2e
+npm install
+npx playwright install chromium
+```
+
+---
+
+## 6. Configure Seed Data
+
+The target application must provide deterministic seed/reset tooling.
+
+The testing framework assumes a fixed baseline and never writes directly to the application's database.
+
+---
+
+## 7. Start the Application
+
+The target application must already be running and reachable before testing begins.
+
+Tester Claude does not start services.
+
+---
+
+## 8. Execute Testing
+
+Run:
+
+```text
+run tests
+```
+
+Tester Claude will:
+
+* Build capability inventories
+* Audit implementation
+* Design tests
+* Validate trustworthiness
+* Execute the suite
+* Produce a single handback
+
+---
+
+# Development Loop
+
+```text
+You:
+    "run tests"
+
+        ↓
+
+Tester Claude:
+    Audit
+    Design
+    Validate
+    Execute
+
+        ↓
+
+One Handback Block
+
+        ↓
+
+You copy/paste
+
+        ↓
+
+Coder Claude:
+    Diagnose
+    Fix
+    Commit
+
+        ↓
+
+You:
+    "run tests"
+```
+
+The Git diff acts as the completion signal between iterations.
+
+---
+
+# Running Without an LLM
+
+Once generated, the Playwright suite operates independently of any AI system.
+
+```bash
+cd tests/e2e && npm test
+```
+
+Re-render the latest handback:
+
+```bash
+node harness/handback.mjs
+```
+
+View current trust posture:
+
+```bash
+cat state/trust-report.md
+```
+
+Any machine running the committed suite should produce the same verdict.
+
+---
+
+# Enforcement Rules
+
+The framework enforces the following guarantees:
+
+* Tester Claude operates in read-only mode against application code.
+* Handbacks describe observable failures, not source-file locations.
+* Retry-pass results are reported as flaky, never green.
+* Quarantine policy: two failures enter quarantine, five consecutive clean runs exit.
+* Environment drift is detected before execution begins.
+* Green results always include oracle provenance and residual risk.
+* The framework never claims absolute correctness.
+* Tester Claude never edits target application code under any circumstances.
+* All remediation work is delegated to Coder Claude.
+
+---
+
+# Philosophy
+
+The goal is not to maximize the number of tests.
+
+The goal is to maximize confidence in the tests that exist.
+
+Every admitted specification must demonstrate:
+
+1. Requirement traceability
+2. Oracle provenance
+3. Failure sensitivity
+4. Deterministic behavior
+5. Reproducible execution
+
+A passing suite is therefore treated as evidence of trustworthiness rather than a claim of complete correctness.
